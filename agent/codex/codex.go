@@ -13,8 +13,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/BurntSushi/toml"
-
 	"github.com/chenhg5/cc-connect/core"
 )
 
@@ -40,12 +38,10 @@ type Agent struct {
 	backend         string // "exec" | "app_server"
 	appServerURL    string
 	codexHome       string
-	systemPrompt    string
-	appendPrompt    string
-	cmd             string   // CLI binary name, default "codex"
-	cliExtraArgs    []string // extra args parsed from cmd after the binary
+	cliBin          string   // CLI binary name, default "codex"
+	cliExtraArgs    []string // extra args parsed from cli_path after the binary
 	providers       []core.ProviderConfig
-	activeIdx       int      // -1 = no provider set
+	activeIdx       int // -1 = no provider set
 	configEnv       []string // env vars from [projects.agent.options.env] — persists across SetSessionEnv calls
 	sessionEnv      []string
 	mu              sync.RWMutex
@@ -62,16 +58,23 @@ func New(opts map[string]any) (core.Agent, error) {
 	backend, _ := opts["backend"].(string)
 	appServerURL, _ := opts["app_server_url"].(string)
 	codexHome, _ := opts["codex_home"].(string)
-	systemPrompt, _ := opts["system_prompt"].(string)
-	appendPrompt, _ := opts["append_system_prompt"].(string)
 	mode = normalizeMode(mode)
 	backend = normalizeBackend(backend)
 	appServerURL = normalizeAppServerURL(appServerURL)
 
-	cmd, cliExtraArgs := core.ParseCmdOpts(opts, "codex")
+	// cli_path allows overriding the binary, e.g. "omx" or "omx --flag val"
+	cliBin := "codex"
+	var cliExtraArgs []string
+	if cliPath, _ := opts["cli_path"].(string); strings.TrimSpace(cliPath) != "" {
+		parts := strings.Fields(cliPath)
+		cliBin = parts[0]
+		if len(parts) > 1 {
+			cliExtraArgs = parts[1:]
+		}
+	}
 
-	if _, err := exec.LookPath(cmd); err != nil {
-		return nil, fmt.Errorf("codex: %q CLI not found in PATH, install with: npm install -g @openai/codex", cmd)
+	if _, err := exec.LookPath(cliBin); err != nil {
+		return nil, fmt.Errorf("codex: %q CLI not found in PATH, install with: npm install -g @openai/codex", cliBin)
 	}
 
 	// Parse project-level env from opts["env"] (set via [projects.agent.options.env] in config.toml).
@@ -99,9 +102,7 @@ func New(opts map[string]any) (core.Agent, error) {
 		backend:         backend,
 		appServerURL:    appServerURL,
 		codexHome:       strings.TrimSpace(codexHome),
-		systemPrompt:    strings.TrimSpace(systemPrompt),
-		appendPrompt:    strings.TrimSpace(appendPrompt),
-		cmd:             cmd,
+		cliBin:          cliBin,
 		cliExtraArgs:    cliExtraArgs,
 		configEnv:       configEnv,
 		activeIdx:       -1,
@@ -210,9 +211,6 @@ func (a *Agent) configuredModels() []core.ModelOption {
 }
 
 func (a *Agent) AvailableModels(ctx context.Context) []core.ModelOption {
-	if models := readCodexModelCatalog(); len(models) > 0 {
-		return models
-	}
 	if models := a.configuredModels(); len(models) > 0 {
 		return models
 	}
@@ -299,23 +297,19 @@ func (a *Agent) fetchModelsFromAPI(ctx context.Context) []core.ModelOption {
 }
 
 func readCodexCachedModels() []core.ModelOption {
-	codexHome, _ := resolveCodexHome(nil)
+	codexHome := os.Getenv("CODEX_HOME")
 	if codexHome == "" {
-		return nil
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil
+		}
+		codexHome = filepath.Join(home, ".codex")
 	}
 	path := filepath.Join(codexHome, "models_cache.json")
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
-	return parseCodexModelsJSON(b)
-}
-
-
-// parseCodexModelsJSON parses a Codex models JSON file (model_catalog.json
-// or models_cache.json) into a deduplicated, filtered slice of ModelOption.
-// It is shared by readCodexCachedModels and readCodexModelCatalog.
-func parseCodexModelsJSON(data []byte) []core.ModelOption {
 	var payload struct {
 		Models []struct {
 			Slug           string `json:"slug"`
@@ -325,7 +319,7 @@ func parseCodexModelsJSON(data []byte) []core.ModelOption {
 			SupportedInAPI bool   `json:"supported_in_api"`
 		} `json:"models"`
 	}
-	if err := json.Unmarshal(data, &payload); err != nil {
+	if err := json.Unmarshal(b, &payload); err != nil {
 		return nil
 	}
 
@@ -357,62 +351,6 @@ func parseCodexModelsJSON(data []byte) []core.ModelOption {
 	return models
 }
 
-
-// readCodexModelCatalog reads $CODEX_HOME/config.toml to find the
-// model_catalog_json setting, then reads and parses that JSON file.
-// This is the authoritative source of model metadata for Codex CLI,
-// maintained by the Codex distribution itself.
-func readCodexModelCatalog() []core.ModelOption {
-	codexHome, _ := resolveCodexHome(nil)
-	if codexHome == "" {
-		return nil
-	}
-
-	// Parse CODEX_HOME/config.toml to find model_catalog_json path
-	cfgPath := filepath.Join(codexHome, "config.toml")
-	var cfg struct {
-		ModelCatalogJSON string `toml:"model_catalog_json"`
-	}
-	if _, err := toml.DecodeFile(cfgPath, &cfg); err != nil {
-		slog.Debug("codex: failed to read config.toml for model_catalog_json", "error", err)
-		return nil
-	}
-	if cfg.ModelCatalogJSON == "" {
-		return nil
-	}
-
-	// Expand ~ and resolve relative paths against CODEX_HOME
-	catalogPath := cfg.ModelCatalogJSON
-	switch {
-	case strings.HasPrefix(catalogPath, "~/"):
-		home, err := os.UserHomeDir()
-		if err != nil {
-			slog.Debug("codex: cannot resolve home dir for model_catalog_json", "error", err)
-			return nil
-		}
-		catalogPath = filepath.Join(home, catalogPath[2:])
-	case catalogPath == "~":
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil
-		}
-		catalogPath = home
-	case !filepath.IsAbs(catalogPath):
-		catalogPath = filepath.Join(codexHome, catalogPath)
-	}
-
-	b, err := os.ReadFile(catalogPath)
-	if err != nil {
-		slog.Debug("codex: failed to read model_catalog_json", "path", catalogPath, "error", err)
-		return nil
-	}
-
-	models := parseCodexModelsJSON(b)
-	if models == nil {
-		slog.Debug("codex: failed to parse model_catalog_json", "path", catalogPath)
-	}
-	return models
-}
 func (a *Agent) SetSessionEnv(env []string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -427,9 +365,7 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	backend := a.backend
 	appServerURL := a.appServerURL
 	codexHome := a.codexHome
-	systemPrompt := a.systemPrompt
-	appendPrompt := a.appendPrompt
-	cliBin := a.cmd
+	cliBin := a.cliBin
 	cliExtraArgs := a.cliExtraArgs
 	workDir := a.workDir
 	// Order matters for MergeEnv override semantics (later wins):
@@ -459,13 +395,13 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	}
 
 	if backend == "app_server" {
-		return newAppServerSession(ctx, appServerURL, workDir, model, reasoningEffort, mode, sessionID, baseURL, provName, extraEnv, codexHome, systemPrompt, appendPrompt)
+		return newAppServerSession(ctx, appServerURL, workDir, model, reasoningEffort, mode, sessionID, baseURL, provName, extraEnv, codexHome)
 	}
 	if codexHome != "" {
 		extraEnv = append(extraEnv, "CODEX_HOME="+codexHome)
 	}
 
-	return newCodexSession(ctx, cliBin, cliExtraArgs, workDir, model, reasoningEffort, mode, sessionID, baseURL, extraEnv, provName, systemPrompt, appendPrompt)
+	return newCodexSession(ctx, cliBin, cliExtraArgs, workDir, model, reasoningEffort, mode, sessionID, baseURL, extraEnv, provName)
 }
 
 func (a *Agent) ListSessions(_ context.Context) ([]core.AgentSessionInfo, error) {

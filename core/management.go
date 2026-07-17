@@ -29,6 +29,7 @@ type ProjectSettingsUpdate struct {
 	ShowWorkdirIndicator *bool
 	ReplyFooter          *bool
 	InjectSender         *bool
+	DingTalkUserID       *string
 	PlatformAllowFrom    map[string]string
 }
 
@@ -683,6 +684,7 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 			"language":          string(e.i18n.CurrentLang()),
 			"admin_from":        adminFrom,
 			"disabled_commands": e.GetDisabledCommands(),
+			"dingtalk_user_id":  e.DingTalkUserID(),
 		}
 
 		var workDir string
@@ -720,6 +722,7 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 			ShowWorkdirIndicator *bool             `json:"show_workdir_indicator"`
 			ReplyFooter          *bool             `json:"reply_footer"`
 			InjectSender         *bool             `json:"inject_sender"`
+			DingTalkUserID       *string           `json:"dingtalk_user_id"`
 			PlatformAllowFrom    map[string]string `json:"platform_allow_from"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -743,6 +746,9 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 		}
 		if body.AdminFrom != nil {
 			e.SetAdminFrom(*body.AdminFrom)
+			if body.DingTalkUserID != nil {
+				e.SetDingTalkUserID(*body.DingTalkUserID)
+			}
 		}
 		if body.DisabledCommands != nil {
 			e.SetDisabledCommands(body.DisabledCommands)
@@ -799,6 +805,7 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 				ShowWorkdirIndicator: body.ShowWorkdirIndicator,
 				ReplyFooter:          body.ReplyFooter,
 				InjectSender:         body.InjectSender,
+					DingTalkUserID:       body.DingTalkUserID,
 				PlatformAllowFrom:    body.PlatformAllowFrom,
 			}
 			if err := m.saveProjectSettings(name, patch); err != nil {
@@ -1528,21 +1535,38 @@ func (m *ManagementServer) handleCron(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Auto-detect session_key: single session, or most recently updated.
+		sessionKey := req.SessionKey
+		if sessionKey == "" {
+			m.mu.RLock()
+			engine := m.engines[project]
+			m.mu.RUnlock()
+			if engine != nil {
+				keys := engine.AllKnownSessionKeys()
+				if len(keys) == 1 {
+					sessionKey = keys[0]
+				} else if len(keys) > 1 {
+					sessionKey = engine.MostRecentSessionKey()
+				}
+			}
+		}
+
 		job := &CronJob{
-			ID:          GenerateCronID(),
-			Project:     project,
-			SessionKey:  req.SessionKey,
-			CronExpr:    req.CronExpr,
-			Prompt:      req.Prompt,
-			Exec:        req.Exec,
-			WorkDir:     req.WorkDir,
-			Description: req.Description,
-			Enabled:     true,
-			Silent:      req.Silent,
-			SessionMode: NormalizeCronSessionMode(req.SessionMode),
-			Mode:        req.Mode,
-			TimeoutMins: req.TimeoutMins,
-			CreatedAt:   time.Now(),
+			ID:             GenerateCronID(),
+			Project:        project,
+			SessionKey:     sessionKey,
+			CronExpr:       req.CronExpr,
+			Prompt:         req.Prompt,
+			Exec:           req.Exec,
+			WorkDir:        req.WorkDir,
+			Description:    req.Description,
+			Enabled:        true,
+			Silent:         req.Silent,
+			SessionMode:    NormalizeCronSessionMode(req.SessionMode),
+			Mode:           req.Mode,
+			TimeoutMins:    req.TimeoutMins,
+			DingTalkUserID: req.DingTalkUserID,
+			CreatedAt:      time.Now(),
 		}
 		if err := m.cronScheduler.AddJob(job); err != nil {
 			mgmtError(w, http.StatusBadRequest, err.Error())

@@ -25,36 +25,34 @@ import (
 // with --resume for conversation continuity. The prompt is passed via stdin
 // (using -p - flag) to preserve newlines in multi-line messages.
 type geminiSession struct {
-	cmd       string
-	extraArgs []string // extra args from cmd, prepended before gemini args
-	workDir   string
-	model     string
-	mode      string
-	timeout   time.Duration
-	extraEnv  []string
-	events    chan core.Event
-	chatID    atomic.Value // stores string — Gemini session ID
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	alive     atomic.Bool
+	cmd      string
+	workDir  string
+	model    string
+	mode     string
+	timeout  time.Duration
+	extraEnv []string
+	events   chan core.Event
+	chatID   atomic.Value // stores string — Gemini session ID
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	alive    atomic.Bool
 
 	pendingMsgs []string // buffered assistant messages awaiting classification
 }
 
-func newGeminiSession(ctx context.Context, cmd string, extraArgs []string, workDir, model, mode, resumeID string, extraEnv []string, timeout time.Duration) (*geminiSession, error) {
+func newGeminiSession(ctx context.Context, cmd, workDir, model, mode, resumeID string, extraEnv []string, timeout time.Duration) (*geminiSession, error) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 
 	gs := &geminiSession{
-		cmd:       cmd,
-		extraArgs: extraArgs,
-		workDir:   workDir,
-		model:     model,
-		mode:      mode,
-		timeout:   timeout,
-		extraEnv:  extraEnv,
-		events:    make(chan core.Event, 64),
-		ctx:       sessionCtx,
+		cmd:      cmd,
+		workDir:  workDir,
+		model:    model,
+		mode:     mode,
+		timeout:  timeout,
+		extraEnv: extraEnv,
+		events:   make(chan core.Event, 64),
+		ctx:      sessionCtx,
 		cancel:   cancel,
 	}
 	gs.alive.Store(true)
@@ -114,9 +112,9 @@ func (gs *geminiSession) Send(prompt string, images []core.ImageAttachment, file
 	chatID := gs.CurrentSessionID()
 	isResume := chatID != ""
 
-	args := append(append([]string{}, gs.extraArgs...),
+	args := []string{
 		"--output-format", "stream-json",
-	)
+	}
 
 	switch gs.mode {
 	case "yolo":

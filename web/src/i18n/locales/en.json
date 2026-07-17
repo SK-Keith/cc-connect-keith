@@ -31,6 +31,7 @@
     "quiet": "Quiet mode",
     "language": "Language",
     "adminFrom": "Admin from",
+    "dingtalkUserId": "DingTalk user ID (cron/timer default)",
     "disabledCommands": "Disabled commands",
     "save": "Save",
     "detail": "Details",
@@ -129,7 +130,8 @@
     "selectSessionKey": "Select session (empty for default)",
     "taskType": "Task type",
     "mode": "Permission mode",
-    "modeDefault": "Use project default"
+    "modeDefault": "Use project default",
+    "dingtalkUserId": "DingTalk user ID"
   },
   "heartbeat": {
     "title": "Heartbeat",
@@ -257,7 +259,9 @@
     "appSecret": "App Secret",
     "sandboxMode": "Sandbox mode",
     "channelSecret": "Channel Secret",
-    "channelToken": "Channel Access Token"
+    "channelToken": "Channel Access Token",
+    "dingtalkUserId": "Default DingTalk User ID",
+    "dingtalkUserIdHint": "Cron/timer results are sent to this user via 1:1 message when not overridden per-job"
   },
   "chat": {
     "noChats": "No projects yet",

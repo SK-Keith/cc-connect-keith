@@ -25,7 +25,6 @@ import (
 // with --resume for conversation continuity.
 type kimiSession struct {
 	cmd       string
-	extraArgs []string // extra args from cmd, prepended before kimi args
 	workDir   string
 	model     string
 	mode      string
@@ -41,20 +40,19 @@ type kimiSession struct {
 	pendingMsgs []string // buffered assistant text messages
 }
 
-func newKimiSession(ctx context.Context, cmd string, extraArgs []string, workDir, model, mode, resumeID string, extraEnv []string, timeout time.Duration) (*kimiSession, error) {
+func newKimiSession(ctx context.Context, cmd, workDir, model, mode, resumeID string, extraEnv []string, timeout time.Duration) (*kimiSession, error) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 
 	ks := &kimiSession{
-		cmd:       cmd,
-		extraArgs: extraArgs,
-		workDir:   workDir,
-		model:     model,
-		mode:      mode,
-		timeout:   timeout,
-	extraEnv:  extraEnv,
-		events:    make(chan core.Event, 64),
-		ctx:       sessionCtx,
-		cancel:    cancel,
+		cmd:      cmd,
+		workDir:  workDir,
+		model:    model,
+		mode:     mode,
+		timeout:  timeout,
+		extraEnv: extraEnv,
+		events:   make(chan core.Event, 64),
+		ctx:      sessionCtx,
+		cancel:   cancel,
 	}
 	ks.alive.Store(true)
 
@@ -124,10 +122,10 @@ func (ks *kimiSession) Send(prompt string, images []core.ImageAttachment, files 
 		fullPrompt += "\n\n[Attached files saved at: " + strings.Join(fileRefs, ", ") + "]"
 	}
 
-	args := append(append([]string{}, ks.extraArgs...),
+	args := []string{
 		"--print",
 		"--output-format", "stream-json",
-	)
+	}
 
 	switch ks.mode {
 	case "plan":

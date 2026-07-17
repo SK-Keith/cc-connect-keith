@@ -37,6 +37,7 @@ export interface ProjectDetail {
     admin_from: string;
     language: string;
     disabled_commands: string[];
+    dingtalk_user_id: string;
   };
 }
 
@@ -51,6 +52,7 @@ export interface ProjectSettingsUpdate {
   show_workdir_indicator?: boolean;
   reply_footer?: boolean;
   inject_sender?: boolean;
+  dingtalk_user_id?: string;
   platform_allow_from?: Record<string, string>;
 }
 

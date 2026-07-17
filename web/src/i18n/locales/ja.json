@@ -5,7 +5,7 @@
     "providers": "プロバイダー",
     "sessions": "セッション",
     "chat": "チャット",
-    "cron": "スケジュールジョブ",
+    "cron": "Cron",
     "bridge": "ブリッジ",
     "skills": "スキル",
     "system": "システム"
@@ -129,7 +129,8 @@
     "selectSessionKey": "セッションを選択（空=デフォルト）",
     "taskType": "タスク種別",
     "mode": "権限モード",
-    "modeDefault": "プロジェクトのデフォルトを使用"
+    "modeDefault": "Use project default",
+    "dingtalkUserId": "DingTalk user ID"
   },
   "heartbeat": {
     "title": "ハートビート",
@@ -257,7 +258,9 @@
     "appSecret": "アプリシークレット",
     "sandboxMode": "サンドボックスモード",
     "channelSecret": "チャンネルシークレット",
-    "channelToken": "チャンネルアクセストークン"
+    "channelToken": "チャンネルアクセストークン",
+    "dingtalkUserId": "デフォルト DingTalk ユーザー ID",
+    "dingtalkUserIdHint": "Cron/Timer の結果はこのユーザーに 1:1 メッセージで送信されます"
   },
   "chat": {
     "noChats": "プロジェクトがありません",

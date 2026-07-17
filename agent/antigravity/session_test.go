@@ -57,7 +57,7 @@ func TestNormalizeMode(t *testing.T) {
 }
 
 func TestSession_ContinueSessionTreatedAsFresh(t *testing.T) {
-	s, err := newAntigravitySession(context.Background(), "echo", nil, "/tmp", "", "default", core.ContinueSession, nil, 0)
+	s, err := newAntigravitySession(context.Background(), "echo", "/tmp", "", "default", core.ContinueSession, nil, 0)
 	if err != nil {
 		t.Fatalf("newAntigravitySession: %v", err)
 	}
@@ -69,8 +69,7 @@ func TestSession_ContinueSessionTreatedAsFresh(t *testing.T) {
 }
 
 func TestBuildAntigravityArgs_PromptAtEnd(t *testing.T) {
-	s, _ := newAntigravitySession(context.Background(), "echo", nil, "/tmp", "", "default", "", nil, 0)
-	args := s.buildAntigravityArgs("sid-1", true, "plan", "What is 1+1?")
+	args := buildAntigravityArgs("sid-1", true, "plan", "What is 1+1?")
 	if len(args) < 2 {
 		t.Fatalf("args too short: %v", args)
 	}
@@ -98,7 +97,7 @@ func TestUsesInteractivePermission(t *testing.T) {
 }
 
 func TestRespondPermission_WritesTerminalAnswer(t *testing.T) {
-	s, err := newAntigravitySession(context.Background(), "echo", nil, "/tmp", "", "default", "", nil, 0)
+	s, err := newAntigravitySession(context.Background(), "echo", "/tmp", "", "default", "", nil, 0)
 	if err != nil {
 		t.Fatalf("newAntigravitySession: %v", err)
 	}

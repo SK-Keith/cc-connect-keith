@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/chenhg5/cc-connect/config"
 	"github.com/chenhg5/cc-connect/core"
 )
 
@@ -98,12 +97,6 @@ func parseSendArgs(args []string) (core.SendRequest, string, error) {
 			}
 			i++
 			req.Message = args[i]
-		case "--cwd", "--work-dir":
-			if i+1 >= len(args) {
-				return req, "", fmt.Errorf("%s requires a value", args[i])
-			}
-			i++
-			req.WorkDir = args[i]
 		case "--tts":
 			if i+1 >= len(args) {
 				return req, "", fmt.Errorf("%s requires a value", args[i])
@@ -179,21 +172,19 @@ func parseSendArgs(args []string) (core.SendRequest, string, error) {
 		req.Message = strings.Join(positional, " ")
 	}
 
-	maxAtt := resolveMaxAttachmentSize(loadSendConfigBestEffort())
-
-	images, err := loadImageAttachments(imagePaths, maxAtt)
+	images, err := loadImageAttachments(imagePaths)
 	if err != nil {
 		return req, "", err
 	}
-	files, err := loadFileAttachments(filePaths, maxAtt)
+	files, err := loadFileAttachments(filePaths)
 	if err != nil {
 		return req, "", err
 	}
-	audioFiles, err := loadTypedFileAttachments(audioPaths, "audio", maxAtt)
+	audioFiles, err := loadTypedFileAttachments(audioPaths, "audio")
 	if err != nil {
 		return req, "", err
 	}
-	videoFiles, err := loadTypedFileAttachments(videoPaths, "video", maxAtt)
+	videoFiles, err := loadTypedFileAttachments(videoPaths, "video")
 	if err != nil {
 		return req, "", err
 	}
@@ -215,10 +206,10 @@ func parseSendArgs(args []string) (core.SendRequest, string, error) {
 	return req, dataDir, nil
 }
 
-func loadImageAttachments(paths []string, maxSize int64) ([]core.ImageAttachment, error) {
+func loadImageAttachments(paths []string) ([]core.ImageAttachment, error) {
 	images := make([]core.ImageAttachment, 0, len(paths))
 	for _, path := range paths {
-		data, fileName, mimeType, err := readAttachment(path, maxSize)
+		data, fileName, mimeType, err := readAttachment(path)
 		if err != nil {
 			return nil, err
 		}
@@ -230,10 +221,10 @@ func loadImageAttachments(paths []string, maxSize int64) ([]core.ImageAttachment
 	return images, nil
 }
 
-func loadFileAttachments(paths []string, maxSize int64) ([]core.FileAttachment, error) {
+func loadFileAttachments(paths []string) ([]core.FileAttachment, error) {
 	files := make([]core.FileAttachment, 0, len(paths))
 	for _, path := range paths {
-		data, fileName, mimeType, err := readAttachment(path, maxSize)
+		data, fileName, mimeType, err := readAttachment(path)
 		if err != nil {
 			return nil, err
 		}
@@ -242,10 +233,10 @@ func loadFileAttachments(paths []string, maxSize int64) ([]core.FileAttachment, 
 	return files, nil
 }
 
-func loadTypedFileAttachments(paths []string, mediaType string, maxSize int64) ([]core.FileAttachment, error) {
+func loadTypedFileAttachments(paths []string, mediaType string) ([]core.FileAttachment, error) {
 	files := make([]core.FileAttachment, 0, len(paths))
 	for _, path := range paths {
-		data, fileName, mimeType, err := readAttachment(path, maxSize)
+		data, fileName, mimeType, err := readAttachment(path)
 		if err != nil {
 			return nil, err
 		}
@@ -280,32 +271,17 @@ func attachmentMatchesMediaType(mimeType, fileName, mediaType string) bool {
 	return false
 }
 
-// loadSendConfigBestEffort loads config.toml — resolved the same way the
-// daemon resolves it — so the standalone `cc-connect send` subcommand (a
-// separate process that otherwise has no config) can honour
-// max_attachment_size_mb. Errors are ignored and nil is returned, so a missing
-// or invalid config never breaks sending; the caller then falls back to the
-// env var / default via resolveMaxAttachmentSize.
-func loadSendConfigBestEffort() *config.Config {
-	cfg, err := config.Load(resolveConfigPath(""))
-	if err != nil {
-		return nil
-	}
-	return cfg
-}
+const maxAttachmentSize = 50 << 20 // 50 MB
 
-// readAttachment reads a single attachment file, rejecting anything larger than
-// maxSize bytes (resolved by the caller from config/env/default). The limit is
-// enforced before the file is read into memory.
-func readAttachment(path string, maxSize int64) ([]byte, string, string, error) {
+func readAttachment(path string) ([]byte, string, string, error) {
 	cleaned := filepath.Clean(path)
 
 	info, err := os.Stat(cleaned)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("read attachment %s: %w", path, err)
 	}
-	if info.Size() > maxSize {
-		return nil, "", "", fmt.Errorf("attachment %s exceeds size limit (%d MB)", path, maxSize>>20)
+	if info.Size() > maxAttachmentSize {
+		return nil, "", "", fmt.Errorf("attachment %s exceeds size limit (%d MB)", path, maxAttachmentSize>>20)
 	}
 
 	data, err := os.ReadFile(cleaned)
@@ -372,8 +348,6 @@ Send a message, attachment, or synthesized voice message to an active cc-connect
 
 Options:
   -m, --message <text>     Message to send (preferred over positional args)
-      --cwd <path>         Start a new session in this working directory
-      --work-dir <path>    Alias for --cwd
       --tts <text>         Synthesize text and send it as a voice/audio message
       --image <path>       Send an image attachment (repeatable)
       --file <path>        Send a file attachment (repeatable)

@@ -15,6 +15,7 @@ export interface CronJob {
   session_mode: string;
   mode: string;
   timeout_mins: number | null;
+  dingtalk_user_id: string;
   created_at: string;
   last_run: string;
   last_error: string;

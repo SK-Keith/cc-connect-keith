@@ -53,6 +53,7 @@ export default function ProjectDetail() {
   const [showWorkdirIndicator, setShowWorkdirIndicator] = useState(true);
   const [replyFooter, setReplyFooter] = useState(true);
   const [injectSender, setInjectSender] = useState(false);
+  const [dingTalkUserID, setDingTalkUserID] = useState('');
   const [platformAllowFrom, setPlatformAllowFrom] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
@@ -140,6 +141,7 @@ export default function ProjectDetail() {
         setShowWorkdirIndicator(proj.value.show_workdir_indicator !== false);
         setReplyFooter(proj.value.reply_footer !== false);
         setInjectSender(proj.value.inject_sender === true);
+        setDingTalkUserID(proj.value.settings?.dingtalk_user_id || '');
         setProviderRefs(proj.value.provider_refs || []);
         const afMap: Record<string, string> = {};
         proj.value.platform_configs?.forEach(pc => {
@@ -189,6 +191,7 @@ export default function ProjectDetail() {
         show_workdir_indicator: showWorkdirIndicator,
         reply_footer: replyFooter,
         inject_sender: injectSender,
+        dingtalk_user_id: dingTalkUserID || undefined,
         platform_allow_from: platformAllowFrom,
       });
       if (res && (res as any).restart_required) {
@@ -583,6 +586,7 @@ export default function ProjectDetail() {
             </div>
             <Input label={t('projects.language')} value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="en, zh, ja..." />
             <Input label={t('projects.adminFrom')} value={adminFrom} onChange={(e) => setAdminFrom(e.target.value)} placeholder="user1,user2 or *" />
+            <Input label={t('projects.dingtalkUserId')} value={dingTalkUserID} onChange={(e) => setDingTalkUserID(e.target.value)} placeholder="" />
             <Input label={t('projects.disabledCommands')} value={disabledCmds} onChange={(e) => setDisabledCmds(e.target.value)} placeholder="restart, upgrade, cron" />
           </div>
         </Card>

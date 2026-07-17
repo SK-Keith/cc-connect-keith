@@ -8,10 +8,6 @@ import (
 	"os/exec"
 )
 
-// RunAsChdirEnv is unused on Windows (run_as_user is not supported) but is
-// defined so cross-platform callers referencing core.RunAsChdirEnv compile.
-const RunAsChdirEnv = "CC_RUNAS_CHDIR"
-
 // DefaultEnvAllowlist is a stub on Windows — run_as_user is not supported.
 var DefaultEnvAllowlist = []string{}
 
@@ -19,7 +15,6 @@ var DefaultEnvAllowlist = []string{}
 type SpawnOptions struct {
 	RunAsUser    string
 	EnvAllowlist []string
-	WorkDir      string
 }
 
 // IsolationMode always returns false on Windows.

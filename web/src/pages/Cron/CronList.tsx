@@ -167,12 +167,13 @@ interface JobForm {
   silent: boolean;
   enabled: boolean;
   mode: string;
+  dingtalk_user_id: string;
   _type: 'prompt' | 'exec';
 }
 
 const emptyForm: JobForm = {
   project: '', session_key: '', cron_expr: '', prompt: '', exec: '',
-  description: '', silent: false, enabled: true, mode: '', _type: 'prompt',
+  description: '', silent: false, enabled: true, mode: '', dingtalk_user_id: '', _type: 'prompt',
 };
 
 /* ── Main page ── */
@@ -246,6 +247,7 @@ export default function CronList() {
       silent: !!job.silent,
       enabled: job.enabled,
       mode: job.mode || '',
+      dingtalk_user_id: job.dingtalk_user_id || '',
       _type: job.exec ? 'exec' : 'prompt',
     });
     setShowForm(true);
@@ -267,6 +269,7 @@ export default function CronList() {
         if (form.silent !== !!editJob.silent) updates.silent = form.silent;
         if (form.enabled !== editJob.enabled) updates.enabled = form.enabled;
         if ((form.mode || '') !== (editJob.mode || '')) updates.mode = form.mode;
+        if (form.dingtalk_user_id !== (editJob.dingtalk_user_id || '')) updates.dingtalk_user_id = form.dingtalk_user_id;
         if (Object.keys(updates).length > 0) {
           await updateCronJob(editJob.id, updates);
         }
@@ -520,6 +523,13 @@ export default function CronList() {
             onChange={v => setForm({ ...form, session_key: v })}
             options={sessionKeys.map(k => ({ value: k, label: k }))}
             placeholder={t('cron.selectSessionKey')}
+          />
+
+          <Input
+            label={t('cron.dingtalkUserId')}
+            value={form.dingtalk_user_id}
+            onChange={e => setForm({ ...form, dingtalk_user_id: e.target.value })}
+            placeholder=""
           />
 
           <Select

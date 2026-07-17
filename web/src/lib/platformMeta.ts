@@ -50,6 +50,7 @@ export const platformMeta: Record<string, PlatformMeta> = {
       { key: 'client_secret', labelKey: 'fields.clientSecret', required: true, type: 'password' },
       { key: 'allow_from', labelKey: 'fields.allowFrom', placeholder: '* (all)', group: 'advanced' },
       { key: 'share_session_in_channel', labelKey: 'fields.sharedGroupSession', type: 'boolean', group: 'advanced' },
+      { key: 'dingtalk_user_id', labelKey: 'fields.dingtalkUserId', group: 'advanced', hintKey: 'fields.dingtalkUserIdHint' },
     ],
   },
   wecom: {

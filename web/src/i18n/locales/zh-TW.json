@@ -129,7 +129,8 @@
     "selectSessionKey": "選擇工作階段（留空使用預設）",
     "taskType": "任務類型",
     "mode": "權限模式",
-    "modeDefault": "跟隨項目預設"
+    "modeDefault": "Use project default",
+    "dingtalkUserId": "DingTalk user ID"
   },
   "heartbeat": {
     "title": "心跳",
@@ -257,7 +258,9 @@
     "appSecret": "App Secret",
     "sandboxMode": "沙盒模式",
     "channelSecret": "Channel Secret",
-    "channelToken": "Channel Access Token"
+    "channelToken": "Channel Access Token",
+    "dingtalkUserId": "預設釘釘推送用戶 ID",
+    "dingtalkUserIdHint": "Cron/Timer 任務結果將通過 1:1 消息發送給該用戶"
   },
   "chat": {
     "noChats": "尚無專案",

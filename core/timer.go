@@ -15,23 +15,24 @@ import (
 
 // TimerJob represents a persisted one-shot timer.
 type TimerJob struct {
-	ID          string    `json:"id"`
-	Project     string    `json:"project"`
-	SessionKey  string    `json:"session_key"`
-	ScheduledAt time.Time `json:"scheduled_at"` // absolute fire time
-	Prompt      string    `json:"prompt"`
-	Exec        string    `json:"exec,omitempty"`     // shell command; mutually exclusive with Prompt
-	WorkDir     string    `json:"work_dir,omitempty"` // working directory for exec; empty = agent work_dir
-	Description string    `json:"description"`
-	Silent      *bool     `json:"silent,omitempty"`       // suppress start notification; nil = use global default
-	Mute        bool      `json:"mute,omitempty"`         // suppress ALL messages (start + result)
-	SessionMode string    `json:"session_mode,omitempty"` // "" or "reuse" = share active session; "new_per_run" = fresh session each run
-	Mode        string    `json:"mode,omitempty"`         // permission mode override; "" = use project default
-	TimeoutMins *int      `json:"timeout_mins,omitempty"` // nil = default 30m; 0 = no limit; >0 = minutes
-	CreatedAt   time.Time `json:"created_at"`
-	Fired       bool      `json:"fired"`
-	FiredAt     time.Time `json:"fired_at,omitempty"`
-	LastError   string    `json:"last_error,omitempty"`
+	ID             string    `json:"id"`
+	Project        string    `json:"project"`
+	SessionKey     string    `json:"session_key"`
+	ScheduledAt    time.Time `json:"scheduled_at"` // absolute fire time
+	Prompt         string    `json:"prompt"`
+	Exec           string    `json:"exec,omitempty"`     // shell command; mutually exclusive with Prompt
+	WorkDir        string    `json:"work_dir,omitempty"` // working directory for exec; empty = agent work_dir
+	Description    string    `json:"description"`
+	Silent         *bool     `json:"silent,omitempty"`       // suppress start notification; nil = use global default
+	Mute           bool      `json:"mute,omitempty"`         // suppress ALL messages (start + result)
+	SessionMode    string    `json:"session_mode,omitempty"` // "" or "reuse" = share active session; "new_per_run" = fresh session each run
+	Mode           string    `json:"mode,omitempty"`         // permission mode override; "" = use project default
+	TimeoutMins    *int      `json:"timeout_mins,omitempty"` // nil = default 30m; 0 = no limit; >0 = minutes
+	DingTalkUserID string    `json:"dingtalk_user_id,omitempty"` // DingTalk user ID for proactive message routing
+	CreatedAt      time.Time `json:"created_at"`
+	Fired          bool      `json:"fired"`
+	FiredAt        time.Time `json:"fired_at,omitempty"`
+	LastError      string    `json:"last_error,omitempty"`
 }
 
 // IsShellJob returns true if the job runs a shell command directly.

@@ -25,7 +25,6 @@ import (
 // Subsequent turns use `--session <sessionID>` to resume.
 type piSession struct {
 	cmd       string
-	extraArgs []string // extra args from cmd, prepended before pi args
 	workDir   string
 	model     string
 	mode      string
@@ -53,17 +52,16 @@ type piSession struct {
 	lastUsage *core.ContextUsage
 }
 
-func newPiSession(ctx context.Context, cmd string, extraArgs []string, workDir, model, mode, thinking, resumeID string, extraEnv []string) (*piSession, error) {
+func newPiSession(ctx context.Context, cmd, workDir, model, mode, thinking, resumeID string, extraEnv []string) (*piSession, error) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 
 	s := &piSession{
-		cmd:       cmd,
-		extraArgs: extraArgs,
-		workDir:   workDir,
-		model:     model,
-		mode:      mode,
-		thinking:  thinking,
-		extraEnv:  extraEnv,
+		cmd:      cmd,
+		workDir:  workDir,
+		model:    model,
+		mode:     mode,
+		thinking: thinking,
+		extraEnv: extraEnv,
 		attachDir: filepath.Join(workDir, ".cc-connect", "attachments",
 			fmt.Sprintf("pi_%d", time.Now().UnixNano())),
 		events:   make(chan core.Event, 64),
@@ -97,7 +95,7 @@ func (s *piSession) Send(prompt string, images []core.ImageAttachment, files []c
 		return fmt.Errorf("session is closed")
 	}
 
-	args := append(append([]string{}, s.extraArgs...), "--mode", "json", "-p")
+	args := []string{"--mode", "json", "-p"}
 
 	sid := s.CurrentSessionID()
 	if sid != "" {

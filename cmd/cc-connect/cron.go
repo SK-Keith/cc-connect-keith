@@ -57,7 +57,7 @@ func closeCronResponseBody(body io.Closer) {
 }
 
 func runCronAdd(args []string) {
-	var project, sessionKey, cronExpr, prompt, execCmd, desc, dataDir, sessionMode string
+	var project, sessionKey, cronExpr, prompt, execCmd, desc, dataDir, sessionMode, dingTalkUserID string
 	var timeoutMins *int
 	var silent bool
 
@@ -113,6 +113,11 @@ func runCronAdd(args []string) {
 					os.Exit(1)
 				}
 				timeoutMins = &n
+			}
+		case "--dingtalk-user-id", "--dingtalk-user":
+			if i+1 < len(args) {
+				i++
+				dingTalkUserID = args[i]
 			}
 		case "--silent":
 			silent = true
@@ -174,6 +179,9 @@ func runCronAdd(args []string) {
 	}
 	if timeoutMins != nil {
 		body["timeout_mins"] = *timeoutMins
+	}
+	if dingTalkUserID != "" {
+		body["dingtalk_user_id"] = dingTalkUserID
 	}
 	payload, _ := json.Marshal(body)
 
@@ -628,6 +636,7 @@ Options:
       --desc <text>          Short description
       --session-mode <mode>  reuse (default) or new-per-run — fresh agent session each run
       --timeout-mins <n>     Max minutes to wait per run (0 = no limit; default 30 if omitted)
+      --dingtalk-user-id <id> DingTalk user ID for direct 1:1 proactive message delivery
       --silent               Suppress cron start notification
       --data-dir <path>      Data directory (default: ~/.cc-connect)
   -h, --help                 Show this help

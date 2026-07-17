@@ -32,6 +32,7 @@
     "language": "语言",
     "adminFrom": "管理来源",
     "disabledCommands": "已禁用命令",
+    "dingtalkUserId": "钉钉用户 ID（Cron/Timer 默认推送目标）",
     "save": "保存",
     "detail": "详情",
     "noProjects": "尚未配置项目",
@@ -129,7 +130,8 @@
     "selectSessionKey": "选择会话（留空使用默认）",
     "taskType": "任务类型",
     "mode": "权限模式",
-    "modeDefault": "跟随项目默认"
+    "modeDefault": "跟随项目默认",
+    "dingtalkUserId": "钉钉用户 ID"
   },
   "heartbeat": {
     "title": "心跳",
@@ -257,7 +259,9 @@
     "appSecret": "App Secret",
     "sandboxMode": "沙箱模式",
     "channelSecret": "Channel Secret",
-    "channelToken": "Channel Access Token"
+    "channelToken": "Channel Access Token",
+    "dingtalkUserId": "默认钉钉推送用户 ID",
+    "dingtalkUserIdHint": "Cron/Timer 任务结果将通过 1:1 消息发送给该用户（可被单个任务覆盖）"
   },
   "chat": {
     "noChats": "暂无项目",

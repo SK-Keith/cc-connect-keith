@@ -26,15 +26,13 @@ func init() {
 //   - "default":           every tool call requires user approval
 //   - "bypassPermissions": auto-approve everything (alias: yolo)
 type Agent struct {
-	workDir      string
-	cmd          string   // CLI binary name (default: "copilot")
-	cliExtraArgs []string // extra args from cmd after the binary name
-	configEnv    []string // env vars from [projects.agent.options.env]
-	model        string
-	mode         string // "default" | "bypassPermissions"
-	providers    []core.ProviderConfig
-	activeIdx    int // -1 = no provider set
-	sessionEnv   []string
+	workDir    string
+	cliBin     string // CLI binary name or path (default: "copilot")
+	model      string
+	mode       string // "default" | "bypassPermissions"
+	providers  []core.ProviderConfig
+	activeIdx  int // -1 = no provider set
+	sessionEnv []string
 
 	mu sync.RWMutex
 }
@@ -44,23 +42,24 @@ func New(opts map[string]any) (core.Agent, error) {
 	if workDir == "" {
 		workDir = "."
 	}
-	cmd, extraArgs := core.ParseCmdOpts(opts, "copilot")
+	cliBin := "copilot"
+	if cliPath, _ := opts["cli_path"].(string); strings.TrimSpace(cliPath) != "" {
+		cliBin = strings.TrimSpace(cliPath)
+	}
 	model, _ := opts["model"].(string)
 	mode, _ := opts["mode"].(string)
 	mode = normalizeMode(mode)
 
-	if _, err := exec.LookPath(cmd); err != nil {
-		return nil, fmt.Errorf("copilot: %q CLI not found in PATH, please install it first", cmd)
+	if _, err := exec.LookPath(cliBin); err != nil {
+		return nil, fmt.Errorf("copilot: %q CLI not found in PATH, please install it first", cliBin)
 	}
 
 	return &Agent{
-		workDir:      workDir,
-		cmd:          cmd,
-		cliExtraArgs: extraArgs,
-		configEnv:    core.ParseConfigEnv(opts),
-		model:        model,
-		mode:         mode,
-		activeIdx:    -1,
+		workDir:   workDir,
+		cliBin:    cliBin,
+		model:     model,
+		mode:      mode,
+		activeIdx: -1,
 	}, nil
 }
 
@@ -74,7 +73,7 @@ func normalizeMode(raw string) string {
 }
 
 func (a *Agent) Name() string           { return "copilot" }
-func (a *Agent) CLIBinaryName() string  { return a.cmd }
+func (a *Agent) CLIBinaryName() string  { return a.cliBin }
 func (a *Agent) CLIDisplayName() string { return "GitHub Copilot" }
 
 func (a *Agent) SetWorkDir(dir string) {
@@ -152,10 +151,8 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	model := a.model
 	mode := a.mode
 	workDir := a.workDir
-	cmd := a.cmd
-	extraArgs := append([]string{}, a.cliExtraArgs...)
-	extraEnv := append([]string(nil), a.configEnv...)
-	extraEnv = append(extraEnv, a.providerEnvLocked()...)
+	cliBin := a.cliBin
+	extraEnv := a.providerEnvLocked()
 	extraEnv = append(extraEnv, a.sessionEnv...)
 	provider := a.providerConfigLocked()
 	if a.activeIdx >= 0 && a.activeIdx < len(a.providers) {
@@ -165,7 +162,7 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	}
 	a.mu.RUnlock()
 
-	return newCopilotSession(ctx, workDir, cmd, extraArgs, model, mode, sessionID, extraEnv, provider)
+	return newCopilotSession(ctx, workDir, cliBin, model, mode, sessionID, extraEnv, provider)
 }
 
 // listSessionsProbeTimeout bounds how long we wait for a session.list probe.
@@ -198,7 +195,7 @@ type probeSession struct {
 }
 
 type probeSnapshot struct {
-	cmd  string
+	cliBin  string
 	workDir string
 	env     []string
 }
@@ -208,7 +205,7 @@ type probeSnapshot struct {
 func newProbeSession(ctx context.Context, snapshot probeSnapshot) (*probeSession, error) {
 	probeCtx, cancel := context.WithCancel(ctx)
 
-	cmd := exec.CommandContext(probeCtx, snapshot.cmd, "--headless", "--stdio", "--no-auto-update")
+	cmd := exec.CommandContext(probeCtx, snapshot.cliBin, "--headless", "--stdio", "--no-auto-update")
 	cmd.Dir = snapshot.workDir
 	cmd.Env = snapshot.env
 
@@ -280,7 +277,7 @@ func (a *Agent) ListSessions(ctx context.Context) ([]core.AgentSessionInfo, erro
 	snapshot := a.probeSnapshotLocked()
 	a.mu.RUnlock()
 
-	if _, err := exec.LookPath(snapshot.cmd); err != nil {
+	if _, err := exec.LookPath(snapshot.cliBin); err != nil {
 		return nil, nil
 	}
 
@@ -346,8 +343,8 @@ func (a *Agent) WorkspaceAgentOptions() map[string]any {
 	if a.model != "" {
 		opts["model"] = a.model
 	}
-	if a.cmd != "copilot" && a.cmd != "" {
-		opts["cmd"] = a.cmd
+	if a.cliBin != "copilot" && a.cliBin != "" {
+		opts["cli_path"] = a.cliBin
 	}
 	return opts
 }
@@ -366,7 +363,7 @@ func (a *Agent) DeleteSession(ctx context.Context, sessionID string) error {
 	snapshot := a.probeSnapshotLocked()
 	a.mu.RUnlock()
 
-	if _, err := exec.LookPath(snapshot.cmd); err != nil {
+	if _, err := exec.LookPath(snapshot.cliBin); err != nil {
 		return nil
 	}
 
@@ -500,7 +497,7 @@ func (a *Agent) probeSnapshotLocked() probeSnapshot {
 	if len(a.sessionEnv) > 0 {
 		env = core.MergeEnv(env, a.sessionEnv)
 	}
-	return probeSnapshot{cmd: a.cmd, workDir: a.workDir, env: env}
+	return probeSnapshot{cliBin: a.cliBin, workDir: a.workDir, env: env}
 }
 
 func (a *Agent) providerConfigLocked() *copilotWireProviderConfig {

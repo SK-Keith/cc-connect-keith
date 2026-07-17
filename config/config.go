@@ -128,12 +128,6 @@ type Config struct {
 	// for sourcing shell profiles so that user-defined functions and aliases are
 	// available. Example: "source ~/.zshrc"
 	ShellProfile string `toml:"shell_profile,omitempty"`
-	// MaxAttachmentSizeMB is the per-file size limit, in MiB, for attachments
-	// sent through `cc-connect send --file/--image/--audio/--video` and the
-	// /send API. 0 (the default) means use core.DefaultMaxAttachmentSize
-	// (50 MiB). Raise it to send larger files; the request body limit on the
-	// API side scales with this value to account for base64 expansion.
-	MaxAttachmentSizeMB int `toml:"max_attachment_size_mb,omitempty"`
 }
 
 // CronConfig controls cron job behavior.
@@ -198,7 +192,6 @@ type DisplayConfig struct {
 	ThinkingMaxLen       *int    `toml:"thinking_max_len"`       // max chars for thinking messages; 0 = no truncation; default 300
 	ToolMaxLen           *int    `toml:"tool_max_len"`           // max chars for tool use messages; 0 = no truncation; default 500
 	ToolMessages         *bool   `toml:"tool_messages"`          // whether tool progress messages are shown; default true
-	HistoryMaxLen        *int    `toml:"history_max_len"`        // max chars per /history entry; 0 = no truncation; default 1000
 	ShowContextIndicator *bool   `toml:"show_context_indicator"` // whether [ctx: ~N%] suffix is shown; default true
 	ReplyFooter          *bool   `toml:"reply_footer"`           // whether Codex-like footer is shown; default true
 }
@@ -512,6 +505,7 @@ type ProjectConfig struct {
 	InjectSender     *bool        `toml:"inject_sender,omitempty"`     // prepend sender identity (platform + user ID) to each message sent to the agent
 	DisabledCommands []string     `toml:"disabled_commands,omitempty"` // commands to disable for this project (e.g. ["restart", "upgrade"])
 	AdminFrom        string       `toml:"admin_from,omitempty"`        // comma-separated user IDs allowed to run privileged commands; "*" = all allowed users
+	DingTalkUserID   string       `toml:"dingtalk_user_id,omitempty"`  // default DingTalk user ID for proactive cron/timer delivery
 	Users            *UsersConfig `toml:"users,omitempty"`             // per-user role config; nil = legacy behavior
 	// WorkspaceIdleTimeoutMinsLegacy is the deprecated per-project form of
 	// the workspace idle reaper timeout. New configs should set the top-level
@@ -916,19 +910,6 @@ func EffectiveDisplay(cfg *Config, proj *ProjectConfig) (mode string, thinkingMe
 	return
 }
 
-// EffectiveHistoryMaxLen returns the per-entry /history truncation length.
-// Resolution: project [display] > global [display] > default 1000. A value
-// of 0 disables truncation.
-func EffectiveHistoryMaxLen(cfg *Config, proj *ProjectConfig) int {
-	if proj != nil && proj.Display != nil && proj.Display.HistoryMaxLen != nil {
-		return *proj.Display.HistoryMaxLen
-	}
-	if cfg != nil && cfg.Display.HistoryMaxLen != nil {
-		return *cfg.Display.HistoryMaxLen
-	}
-	return 1000
-}
-
 // EffectiveShell returns the shell binary, flag, and init command for the project.
 // Resolution: per-project > global > platform default.
 // The flag is auto-detected: "/C" for cmd, "-Command" for powershell/pwsh, "-c" for everything else.
@@ -1076,9 +1057,6 @@ func validateDisplayConfig(prefix string, display *DisplayConfig) error {
 		default:
 			return fmt.Errorf("config: %s.card_mode must be \"legacy\" or \"rich\"", prefix)
 		}
-	}
-	if display.HistoryMaxLen != nil && *display.HistoryMaxLen < 0 {
-		return fmt.Errorf("config: %s.history_max_len must be >= 0", prefix)
 	}
 	return nil
 }
@@ -3064,6 +3042,7 @@ type ProjectSettingsUpdate struct {
 	ShowWorkdirIndicator *bool
 	ReplyFooter          *bool
 	InjectSender         *bool
+	DingTalkUserID       *string
 	PlatformAllowFrom    map[string]string
 }
 
@@ -3133,6 +3112,9 @@ func SaveProjectSettings(projectName string, update ProjectSettingsUpdate) error
 		}
 		if update.AdminFrom != nil {
 			proj.AdminFrom = *update.AdminFrom
+			if update.DingTalkUserID != nil {
+				proj.DingTalkUserID = *update.DingTalkUserID
+			}
 		}
 		if update.DisabledCommands != nil {
 			proj.DisabledCommands = update.DisabledCommands
@@ -3472,11 +3454,6 @@ func GetGlobalSettings() map[string]any {
 		result["tool_max_len"] = *cfg.Display.ToolMaxLen
 	} else {
 		result["tool_max_len"] = 500
-	}
-	if cfg.Display.HistoryMaxLen != nil {
-		result["history_max_len"] = *cfg.Display.HistoryMaxLen
-	} else {
-		result["history_max_len"] = 1000
 	}
 	// Stream preview
 	spEnabled := true

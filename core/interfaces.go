@@ -42,6 +42,22 @@ type CronReplyTargetResolver interface {
 	ResolveCronReplyTarget(sessionKey string, title string) (resolvedSessionKey string, replyCtx any, err error)
 }
 
+// CronTargetUserSetter is an optional interface for platforms that support
+// overriding the target user for cron job delivery. When a CronJob has
+// DingTalkUserID set, the engine calls SetCronTargetUser so the platform can
+// route the message to the specified user instead of the default reply target.
+type CronTargetUserSetter interface {
+	SetCronTargetUser(replyCtx any, userID string) (any, error)
+}
+
+// DefaultCronTargetProvider is an optional interface for platforms that
+// provide a default target user for cron/timer jobs. When a job does not
+// specify an explicit target user, the engine falls back to the platform's
+// configured default (e.g. DingTalk's dingtalk_user_id config option).
+type DefaultCronTargetProvider interface {
+	DefaultCronTargetUser() string
+}
+
 // SessionEnvInjector is an optional interface for agents that accept
 // per-session environment variables (e.g. CC_PROJECT, CC_SESSION_KEY).
 type SessionEnvInjector interface {
@@ -94,25 +110,7 @@ When the user explicitly asks you to synthesize speech from text, use:
 
 After cc-connect send --tts (or --audio) succeeds, reply only with NO_REPLY unless the user also asked for a visible text confirmation. This prevents sending an extra text message after the voice message.
 
-### Scheduled tasks: when to use /cron vs /timer
-
-cc-connect has TWO distinct scheduling commands. Picking the wrong one creates a confusing UX for the user.
-
-  ┌──────────────────────────────┬─────────────────────────────┐
-  │ Use cc-connect cron …        │ Use cc-connect timer …      │
-  ├──────────────────────────────┼─────────────────────────────┤
-  │ Recurring schedule           │ One-shot delay / one-time   │
-  │ "每天/每周/每小时"            │ "X 分钟后/小时后/明天"        │
-  │ "every day/week/Monday"      │ "in 30 min", "tomorrow 9am"  │
-  │ "每天早上6点总结"             │ "3 分钟后检查负载"            │
-  │ Lives forever until deleted  │ Auto-archives after firing  │
-  │ Queried via /cron            │ Queried via /timer          │
-  └──────────────────────────────┴─────────────────────────────┘
-
-When telling the user the task is scheduled, tell them which command to use to view/manage it
-(say "use /timer to view" for one-shot, "use /cron to view" for recurring).
-
-### Scheduled tasks (cron) — RECURRING
+### Scheduled tasks (cron)
 When the user asks you to do something on a schedule (e.g. "每天早上6点帮我总结GitHub trending"), use the Bash tool to run:
 
   cc-connect cron add --cron "<min> <hour> <day> <month> <weekday>" --prompt "<task description>" --desc "<short label>"
@@ -154,16 +152,11 @@ Examples:
   cc-connect cron edit abc123 enabled false
   cc-connect cron edit abc123 prompt "Updated daily summary task"
 
-### One-shot timers (timer) — ONE-TIME DELAY
-When the user asks you to do something AFTER A DELAY or AT A SPECIFIC FUTURE TIME
-(e.g. "两小时后帮我检查PR", "3 分钟后看下系统负载", "明天早上 9 点提醒我"),
+### One-shot timers (timer)
+When the user asks you to do something after a delay (e.g. "两小时后帮我检查PR"),
 use the Bash tool to run:
 
   cc-connect timer add --delay <duration> --prompt "<task description>"
-
-IMPORTANT: do NOT use cron for one-shot delays. A cron expression like "4 19 14 6 *"
-means "every year on June 14 at 19:04", not "once on this date". Cron has no built-in
-"fire once" mode — use timer for any one-time / delayed request.
 
 Duration examples: 30m, 2h, 1h30m. Or use absolute time: --at "2026-05-16T09:00"
 Absolute times without timezone (e.g. "2026-05-16T09:00") are interpreted as the
@@ -552,14 +545,6 @@ type ContextCompressor interface {
 	CompressCommand() string
 }
 
-// AgentSessionCanceller is an optional interface for agent sessions that support
-// cancelling the current turn without terminating the session or its underlying
-// process. When implemented, the engine calls CancelTurn instead of Close() for
-// /stop, allowing the session to remain alive for the next user message.
-type AgentSessionCanceller interface {
-	CancelTurn() error
-}
-
 // CommandProvider is an optional interface for agents that expose custom slash
 // commands via local files (e.g. .claude/commands/*.md). The engine scans the
 // returned directories for *.md files and registers them as slash commands.
@@ -568,14 +553,9 @@ type CommandProvider interface {
 }
 
 // SkillProvider is an optional interface for agents that expose skills via
-// local directories (e.g. .claude/skills/<name>/SKILL.md). Only the depth-1
-// layout is recognised: each immediate subdirectory of the returned dirs
-// that contains a SKILL.md is registered as a skill. Nested SKILL.md files
-// (e.g. inside `<name>/references/...`) are treated as skill assets and
-// ignored — they match the Claude Code CLI convention (issue #1304) and
-// prevent phantom slash commands from leaking into platform command menus.
-// Skills are project-level and agent-specific — they are NOT shared across
-// different agent types.
+// local directories (e.g. .claude/skills/<name>/SKILL.md). Each subdirectory
+// containing a SKILL.md is treated as a skill. Skills are project-level and
+// agent-specific — they are NOT shared across different agent types.
 type SkillProvider interface {
 	SkillDirs() []string
 }

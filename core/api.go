@@ -15,11 +15,6 @@ import (
 	"time"
 )
 
-// DefaultMaxAttachmentSize is the default per-attachment size limit (50 MiB)
-// applied by the /send API and `cc-connect send` when max_attachment_size_mb
-// is unset. Exported so cmd/cc-connect can resolve the same default.
-const DefaultMaxAttachmentSize int64 = 50 << 20
-
 // APIServer exposes a local Unix socket API for external tools (e.g. cron jobs)
 // to send messages to active sessions.
 type APIServer struct {
@@ -31,11 +26,7 @@ type APIServer struct {
 	cron       *CronScheduler
 	timer      *TimerScheduler
 	relay      *RelayManager
-	// maxAttachmentBytes caps the raw size of a single attachment accepted by
-	// /send; the request body limit in handleSend is derived from it (base64
-	// expansion + envelope). Defaults to DefaultMaxAttachmentSize.
-	maxAttachmentBytes int64
-	mu                 sync.RWMutex
+	mu         sync.RWMutex
 }
 
 // SendRequest is the JSON body for POST /send.
@@ -51,8 +42,6 @@ type SendRequest struct {
 	Project    string            `json:"project"`
 	SessionKey string            `json:"session_key"`
 	Message    string            `json:"message"`
-	WorkDir    string            `json:"work_dir,omitempty"`
-	CWD        string            `json:"cwd,omitempty"`
 	TTSText    string            `json:"tts_text,omitempty"`
 	Images     []ImageAttachment `json:"images,omitempty"`
 	Files      []FileAttachment  `json:"files,omitempty"`
@@ -83,11 +72,10 @@ func NewAPIServer(dataDir string) (*APIServer, error) {
 	}
 
 	s := &APIServer{
-		socketPath:         sockPath,
-		listener:           listener,
-		mux:                http.NewServeMux(),
-		engines:            make(map[string]*Engine),
-		maxAttachmentBytes: DefaultMaxAttachmentSize,
+		socketPath: sockPath,
+		listener:   listener,
+		mux:        http.NewServeMux(),
+		engines:    make(map[string]*Engine),
 	}
 	s.mux.HandleFunc("/send", s.handleSend)
 	s.mux.HandleFunc("/sessions", s.handleSessions)
@@ -138,39 +126,6 @@ func (s *APIServer) SetTimerScheduler(ts *TimerScheduler) {
 	s.timer = ts
 }
 
-// SetMaxAttachmentSize overrides the per-attachment size limit (bytes) used by
-// /send. Non-positive values are ignored so the default is retained. Safe to
-// call at any time, including from the config reload path: it is guarded by
-// s.mu because handleSend reads the limit concurrently.
-func (s *APIServer) SetMaxAttachmentSize(bytes int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if bytes > 0 {
-		s.maxAttachmentBytes = bytes
-	}
-}
-
-// sendBodyEnvelope is the slack added on top of the base64-expanded attachment
-// limit when sizing the /send request body: it covers the JSON envelope (field
-// names, message text, metadata) and a few sub-limit attachments.
-const sendBodyEnvelope int64 = 8 << 20 // 8 MiB
-
-// sendBodyLimit returns the maximum accepted /send request body size in bytes.
-// It is derived from the per-attachment limit to accommodate base64 expansion
-// (~4/3) plus envelope slack, falling back to DefaultMaxAttachmentSize when no
-// limit has been set (e.g. APIServer zero value in tests). Callers in hot paths
-// (handleSend) run concurrently with SetMaxAttachmentSize, so the read is
-// guarded by s.mu.
-func (s *APIServer) sendBodyLimit() int64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	limit := s.maxAttachmentBytes
-	if limit <= 0 {
-		limit = DefaultMaxAttachmentSize
-	}
-	return limit*4/3 + sendBodyEnvelope
-}
-
 func (s *APIServer) Start() {
 	s.server = &http.Server{Handler: s.mux}
 	go func() {
@@ -206,14 +161,9 @@ func (s *APIServer) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Attachments travel base64-encoded inside the JSON body (~4/3 expansion)
-	// plus the request envelope, so size the reader to fit one max-size
-	// attachment with overhead to spare. The previous hard-coded 52 MB cap was
-	// smaller than a single 50 MB attachment after base64 encoding and would
-	// reject valid sends; deriving it from maxAttachmentBytes keeps the body
-	// limit in step with the configured attachment limit.
+	const maxSendBody = 52 << 20 // 52 MB (slightly above max attachment to account for base64 overhead)
 	var req SendRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, s.sendBodyLimit())).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxSendBody)).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -248,12 +198,8 @@ func (s *APIServer) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workDir := req.WorkDir
-	if workDir == "" {
-		workDir = req.CWD
-	}
 	if req.Message != "" || len(req.Images) > 0 || len(req.Files) > 0 {
-		if err := engine.SendToSessionWithOptions(req.SessionKey, req.Message, req.Images, req.Files, SendOptions{WorkDir: workDir, AtUsers: req.AtUsers, AtAll: req.AtAll}); err != nil {
+		if err := engine.SendToSessionWithAttachments(req.SessionKey, req.Message, req.Images, req.Files, req.AtUsers, req.AtAll); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -315,17 +261,18 @@ func (s *APIServer) handleSessions(w http.ResponseWriter, r *http.Request) {
 
 // CronAddRequest is the JSON body for POST /cron/add.
 type CronAddRequest struct {
-	Project     string `json:"project"`
-	SessionKey  string `json:"session_key"`
-	CronExpr    string `json:"cron_expr"`
-	Prompt      string `json:"prompt"`
-	Exec        string `json:"exec"`
-	WorkDir     string `json:"work_dir"`
-	Description string `json:"description"`
-	Silent      *bool  `json:"silent,omitempty"`
-	SessionMode string `json:"session_mode,omitempty"`
-	Mode        string `json:"mode,omitempty"`
-	TimeoutMins *int   `json:"timeout_mins,omitempty"`
+	Project        string `json:"project"`
+	SessionKey     string `json:"session_key"`
+	CronExpr       string `json:"cron_expr"`
+	Prompt         string `json:"prompt"`
+	Exec           string `json:"exec"`
+	WorkDir        string `json:"work_dir"`
+	Description    string `json:"description"`
+	Silent         *bool  `json:"silent,omitempty"`
+	SessionMode    string `json:"session_mode,omitempty"`
+	Mode           string `json:"mode,omitempty"`
+	TimeoutMins    *int   `json:"timeout_mins,omitempty"`
+	DingTalkUserID string `json:"dingtalk_user_id,omitempty"`
 }
 
 func (s *APIServer) handleCronAdd(w http.ResponseWriter, r *http.Request) {
@@ -372,39 +319,44 @@ func (s *APIServer) handleCronAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve session_key: use provided, or auto-detect from active sessions
+	// Resolve session_key: use provided, auto-detect single session, or pick most recent.
 	sessionKey := req.SessionKey
 	if sessionKey == "" {
 		s.mu.RLock()
 		engine := s.engines[project]
 		s.mu.RUnlock()
 		if engine != nil {
-			keys := engine.ActiveSessionKeys()
+			keys := engine.AllKnownSessionKeys()
 			if len(keys) == 1 {
 				sessionKey = keys[0]
+			} else if len(keys) > 1 {
+				sessionKey = engine.MostRecentSessionKey()
+			}
+			if sessionKey != "" {
 				slog.Debug("auto-detected session_key for cron job", "session_key", sessionKey)
 			}
 		}
 	}
 	if sessionKey == "" {
-		http.Error(w, "session_key is required: set CC_SESSION_KEY env, pass --session-key, or ensure exactly one active session exists", http.StatusBadRequest)
+		http.Error(w, "session_key is required: set CC_SESSION_KEY env, pass --session-key, or ensure at least one session exists", http.StatusBadRequest)
 		return
 	}
 
 	job := &CronJob{
-		ID:          GenerateCronID(),
-		Project:     project,
-		SessionKey:  sessionKey,
-		CronExpr:    req.CronExpr,
-		Prompt:      req.Prompt,
-		Exec:        req.Exec,
-		WorkDir:     req.WorkDir,
-		Description: req.Description,
-		Enabled:     true,
-		Silent:      req.Silent,
-		SessionMode: NormalizeCronSessionMode(req.SessionMode),
-		Mode:        req.Mode,
-		TimeoutMins: req.TimeoutMins,
+		ID:             GenerateCronID(),
+		Project:        project,
+		SessionKey:     sessionKey,
+		CronExpr:       req.CronExpr,
+		Prompt:         req.Prompt,
+		Exec:           req.Exec,
+		WorkDir:        req.WorkDir,
+		Description:    req.Description,
+		Enabled:        true,
+		Silent:         req.Silent,
+		SessionMode:    NormalizeCronSessionMode(req.SessionMode),
+		Mode:           req.Mode,
+		TimeoutMins:    req.TimeoutMins,
+		DingTalkUserID: req.DingTalkUserID,
 	}
 	job.CreatedAt = time.Now()
 
@@ -570,18 +522,19 @@ func (s *APIServer) handleCronEdit(w http.ResponseWriter, r *http.Request) {
 
 // TimerAddRequest is the JSON body for POST /timer/add.
 type TimerAddRequest struct {
-	Project     string `json:"project"`
-	SessionKey  string `json:"session_key"`
-	Delay       string `json:"delay"` // relative ("2h") or absolute ISO time
-	Prompt      string `json:"prompt"`
-	Exec        string `json:"exec"`
-	WorkDir     string `json:"work_dir"`
-	Description string `json:"description"`
-	Silent      *bool  `json:"silent,omitempty"`
-	Mute        bool   `json:"mute,omitempty"`
-	SessionMode string `json:"session_mode,omitempty"`
-	Mode        string `json:"mode,omitempty"`
-	TimeoutMins *int   `json:"timeout_mins,omitempty"`
+	Project        string `json:"project"`
+	SessionKey     string `json:"session_key"`
+	Delay          string `json:"delay"` // relative ("2h") or absolute ISO time
+	Prompt         string `json:"prompt"`
+	Exec           string `json:"exec"`
+	WorkDir        string `json:"work_dir"`
+	Description    string `json:"description"`
+	Silent         *bool  `json:"silent,omitempty"`
+	Mute           bool   `json:"mute,omitempty"`
+	SessionMode    string `json:"session_mode,omitempty"`
+	Mode           string `json:"mode,omitempty"`
+	TimeoutMins    *int   `json:"timeout_mins,omitempty"`
+	DingTalkUserID string `json:"dingtalk_user_id,omitempty"`
 }
 
 func (s *APIServer) handleTimerAdd(w http.ResponseWriter, r *http.Request) {
@@ -639,9 +592,11 @@ func (s *APIServer) handleTimerAdd(w http.ResponseWriter, r *http.Request) {
 		engine := s.engines[project]
 		s.mu.RUnlock()
 		if engine != nil {
-			keys := engine.ActiveSessionKeys()
+			keys := engine.AllKnownSessionKeys()
 			if len(keys) == 1 {
 				sessionKey = keys[0]
+			} else if len(keys) > 1 {
+				sessionKey = engine.MostRecentSessionKey()
 			}
 		}
 	}
@@ -651,20 +606,21 @@ func (s *APIServer) handleTimerAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	job := &TimerJob{
-		ID:          GenerateTimerID(),
-		Project:     project,
-		SessionKey:  sessionKey,
-		ScheduledAt: fireAt,
-		Prompt:      req.Prompt,
-		Exec:        req.Exec,
-		WorkDir:     req.WorkDir,
-		Description: req.Description,
-		Silent:      req.Silent,
-		Mute:        req.Mute,
-		SessionMode: req.SessionMode,
-		Mode:        req.Mode,
-		TimeoutMins: req.TimeoutMins,
-		CreatedAt:   time.Now(),
+		ID:             GenerateTimerID(),
+		Project:        project,
+		SessionKey:     sessionKey,
+		ScheduledAt:    fireAt,
+		Prompt:         req.Prompt,
+		Exec:           req.Exec,
+		WorkDir:        req.WorkDir,
+		Description:    req.Description,
+		Silent:         req.Silent,
+		Mute:           req.Mute,
+		SessionMode:    req.SessionMode,
+		Mode:           req.Mode,
+		TimeoutMins:    req.TimeoutMins,
+		DingTalkUserID: req.DingTalkUserID,
+		CreatedAt:      time.Now(),
 	}
 
 	if err := s.timer.AddJob(job); err != nil {

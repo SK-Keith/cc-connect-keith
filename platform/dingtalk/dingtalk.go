@@ -73,6 +73,7 @@ type Platform struct {
 	agentID               int64 // Agent ID for work notifications API (numeric)
 	allowFrom             string
 	shareSessionInChannel bool
+	dingtalkUserID        string // default user ID for proactive message routing (cron/timer)
 	streamClient          *dingtalkClient.StreamClient
 	streamCtxCancel       context.CancelFunc
 	handler               core.MessageHandler
@@ -150,6 +151,8 @@ func New(opts map[string]any) (core.Platform, error) {
 		cardThrottleMs = v
 	}
 
+	dingtalkUserID, _ := opts["dingtalk_user_id"].(string)
+
 	return &Platform{
 		clientID:              clientID,
 		clientSecret:          clientSecret,
@@ -157,6 +160,7 @@ func New(opts map[string]any) (core.Platform, error) {
 		agentID:               agentID,
 		allowFrom:             allowFrom,
 		shareSessionInChannel: shareSessionInChannel,
+		dingtalkUserID:        dingtalkUserID,
 		httpClient:            &http.Client{Timeout: 30 * time.Second},
 		reactionEmoji:         reactionEmoji,
 		doneEmoji:             doneEmoji,
@@ -200,17 +204,9 @@ func (p *Platform) Start(handler core.MessageHandler) error {
 			default:
 			}
 
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						slog.Error("dingtalk: stream panic recovered, will reconnect",
-							"panic", r)
-					}
-				}()
-				if err := p.streamClient.Start(ctx); err != nil {
-					slog.Warn("dingtalk: stream disconnected, reconnecting", "error", err)
-				}
-			}()
+			if err := p.streamClient.Start(ctx); err != nil {
+				slog.Warn("dingtalk: stream disconnected, reconnecting", "error", err)
+			}
 
 			// Brief pause before reconnecting to avoid tight loop on persistent failures.
 			select {
@@ -276,7 +272,11 @@ func (p *Platform) onMessage(data *chatbot.BotCallbackDataModel, richText *richT
 	}
 
 	var sessionKey string
-	if p.shareSessionInChannel {
+	// For direct (1:1) chats there is only one user, so shareSessionInChannel is
+	// meaningless — always include senderStaffId so proactive messaging works.
+	// For group chats, shareSessionInChannel omits the staff ID so all members
+	// share the same session context.
+	if p.shareSessionInChannel && convType == "g" {
 		sessionKey = fmt.Sprintf("dingtalk:%s:%s", convType, data.ConversationId)
 	} else {
 		sessionKey = fmt.Sprintf("dingtalk:%s:%s:%s", convType, data.ConversationId, data.SenderStaffId)
@@ -1608,12 +1608,12 @@ func (p *Platform) ReconstructReplyCtx(sessionKey string) (any, error) {
 	parts := strings.SplitN(stripped, ":", 3)
 
 	if len(parts) < 2 {
-		return nil, fmt.Errorf("dingtalk: invalid session key format: %q", sessionKey)
+		return nil, fmt.Errorf("dingtalk: invalid session key format %q, expected dingtalk:{g|d}:<conversationId>[:<senderStaffId>]", sessionKey)
 	}
 
 	convType := parts[0]
 	if convType != "g" && convType != "d" {
-		return nil, fmt.Errorf("dingtalk: invalid conversation type %q in session key: %q", convType, sessionKey)
+		return nil, fmt.Errorf("dingtalk: invalid conversation type %q in session key %q, expected \"g\" (group) or \"d\" (direct)", convType, sessionKey)
 	}
 
 	conversationId := parts[1]
@@ -1634,6 +1634,28 @@ func (p *Platform) ReconstructReplyCtx(sessionKey string) (any, error) {
 	}, nil
 }
 
+// SetCronTargetUser implements core.CronTargetUserSetter. It overrides the
+// reply context so that proactive messages are routed to the specified
+// DingTalk user via the batchSend API (direct 1:1 message), regardless of
+// the original session key's conversation type.
+func (p *Platform) SetCronTargetUser(replyCtx any, userID string) (any, error) {
+	rc, ok := replyCtx.(replyContext)
+	if !ok {
+		return replyCtx, fmt.Errorf("dingtalk: unexpected reply context type %T", replyCtx)
+	}
+	rc.senderStaffId = userID
+	rc.isGroup = false
+	rc.proactive = true
+	return rc, nil
+}
+
+// DefaultCronTargetUser implements core.DefaultCronTargetProvider.
+// It returns the default DingTalk user ID configured in the platform options,
+// which is used as a fallback when a cron/timer job does not specify one.
+func (p *Platform) DefaultCronTargetUser() string {
+	return p.dingtalkUserID
+}
+
 // sendProactiveMessage sends a message using the DingTalk group/direct message API
 // instead of the temporary sessionWebhook. This enables cc-connect send, cron,
 // webhook, and other proactive messaging features.
@@ -1651,7 +1673,7 @@ func (p *Platform) sendProactiveMessage(ctx context.Context, rc replyContext, co
 	if rc.isGroup && rc.conversationId != "" {
 		// Group message via /v1.0/robot/groupMessages/send
 		apiURL = "https://api.dingtalk.com/v1.0/robot/groupMessages/send"
-		msgParam, _ := json.Marshal(map[string]string{"text": content})
+		msgParam, _ := json.Marshal(map[string]string{"title": "cc-connect", "text": content})
 		requestBody = map[string]any{
 			"robotCode":          p.robotCode,
 			"openConversationId": rc.conversationId,

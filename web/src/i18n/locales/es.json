@@ -5,7 +5,7 @@
     "providers": "Proveedores",
     "sessions": "Sesiones",
     "chat": "Chat",
-    "cron": "Tareas programadas",
+    "cron": "Cron",
     "bridge": "Puente",
     "skills": "Habilidades",
     "system": "Sistema"
@@ -32,6 +32,7 @@
     "language": "Idioma",
     "adminFrom": "Administración desde",
     "disabledCommands": "Comandos deshabilitados",
+    "dingtalkUserId": "ID de usuario DingTalk (predeterminado cron/timer)",
     "save": "Guardar",
     "detail": "Detalles",
     "noProjects": "No hay proyectos configurados",
@@ -129,7 +130,8 @@
     "selectSessionKey": "Seleccionar sesión (vacío = predeterminada)",
     "taskType": "Tipo de tarea",
     "mode": "Modo de permisos",
-    "modeDefault": "Usar predeterminado del proyecto"
+    "modeDefault": "Use project default",
+    "dingtalkUserId": "DingTalk user ID"
   },
   "heartbeat": {
     "title": "Latido",
@@ -257,7 +259,9 @@
     "appSecret": "App Secret",
     "sandboxMode": "Modo sandbox",
     "channelSecret": "Channel Secret",
-    "channelToken": "Channel Access Token"
+    "channelToken": "Channel Access Token",
+    "dingtalkUserId": "ID de usuario DingTalk predeterminado",
+    "dingtalkUserIdHint": "Resultados cron/timer se envían a este usuario vía mensaje 1:1"
   },
   "chat": {
     "noChats": "No hay proyectos",

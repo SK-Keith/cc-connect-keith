@@ -35,10 +35,10 @@ func init() {
 //   - "bypassPermissions": auto-approve everything (alias: yolo)
 type Agent struct {
 	workDir          string
-	cmd              string   // CLI binary name (default: "claude")
-	cliExtraArgs     []string // extra args parsed from cmd (e.g. ["code", "-t", "foo"])
+	cliBin           string   // CLI binary name or path (default: "claude")
+	cliExtraArgs     []string // extra args parsed from cli_path (e.g. ["code", "-t", "foo"])
 	configEnv        []string // env vars from [projects.agent.options.env] — persists across SetSessionEnv calls
-	cmdArgsFlag      string   // if set, claude args are passed as a single string via this flag (e.g. "-a")
+	cliArgsFlag      string   // if set, claude args are passed as a single string via this flag (e.g. "-a")
 	model            string
 	reasoningEffort  string // "low" | "medium" | "high" | "max"
 	mode             string // "default" | "acceptEdits" | "plan" | "auto" | "bypassPermissions" | "dontAsk"
@@ -51,22 +51,12 @@ type Agent struct {
 	routerURL        string // Claude Code Router URL (e.g., "http://127.0.0.1:3456")
 	routerAPIKey     string // Claude Code Router API key (optional)
 	systemPrompt     string // Custom system prompt to pass to Claude CLI
-	pluginDirs       []string // Plugin directories to load via --plugin-dir (repeatable)
 
 	appendSystemPrompt string // Custom text appended to the system prompt (keeps Claude's default)
 
 	providerProxy  *core.ProviderProxy // local proxy for third-party providers
 	proxyLocalURL  string              // local URL of the proxy
 	platformPrompt string              // platform-specific formatting instructions
-
-	// ccDataDir is injected by the cc-connect host (see buildAgentOptions
-	// in cmd/cc-connect/main.go). It locates the global directory where
-	// we write the shared cc-connect system prompt file (issue #1376
-	// workaround for Windows 8192-byte cmdline limit). The file at
-	// <ccDataDir>/agent-prompts/cc-connect-system.md is written once per
-	// startup and shared across all sessions that don't need per-spawn
-	// customisation. Empty value falls back to os.TempDir.
-	ccDataDir string
 
 	// spawnOpts controls OS-user isolation via run_as_user. Zero value
 	// means legacy spawn as the supervisor user. See core/runas.go.
@@ -129,35 +119,24 @@ func New(opts map[string]any) (core.Agent, error) {
 	if workDir == "" {
 		workDir = "."
 	}
-	cmd, cliExtraArgs := core.ParseCmdOpts(opts, "claude")
-	cmdArgsFlag, _ := opts["cmd_args_flag"].(string)
-	if cmdArgsFlag == "" {
-		if v, ok := opts["cli_args_flag"].(string); ok && v != "" {
-			slog.Warn("DEPRECATED: 'cli_args_flag' is deprecated, use 'cmd_args_flag' instead",
-				"deprecated_key", "cli_args_flag",
-				"new_key", "cmd_args_flag",
-				"value", v)
-			cmdArgsFlag = v
+	cliBin := "claude"
+	var cliExtraArgs []string
+	if cliPath, _ := opts["cli_path"].(string); cliPath != "" {
+		// NOTE: paths containing spaces are not supported because Fields
+		// splits on whitespace. Use a symlink or wrapper script instead.
+		parts := strings.Fields(cliPath)
+		cliBin = parts[0]
+		if len(parts) > 1 {
+			cliExtraArgs = parts[1:]
 		}
 	}
+	cliArgsFlag, _ := opts["cli_args_flag"].(string)
 	model, _ := opts["model"].(string)
 	reasoningEffort, _ := opts["reasoning_effort"].(string)
 	mode, _ := opts["mode"].(string)
 	mode = normalizePermissionMode(mode)
 	systemPrompt, _ := opts["system_prompt"].(string)
 	appendSystemPrompt, _ := opts["append_system_prompt"].(string)
-	ccDataDir, _ := opts["cc_data_dir"].(string)
-
-	var pluginDirs []string
-	if dir, ok := opts["plugin_dir"].(string); ok && dir != "" {
-		pluginDirs = []string{dir}
-	} else if dirs, ok := opts["plugin_dir"].([]any); ok {
-		for _, d := range dirs {
-			if s, ok := d.(string); ok && s != "" {
-				pluginDirs = append(pluginDirs, s)
-			}
-		}
-	}
 
 	var allowedTools []string
 	if tools, ok := opts["allowed_tools"].([]any); ok {
@@ -215,8 +194,8 @@ func New(opts map[string]any) (core.Agent, error) {
 	// skip the supervisor-side LookPath check and let spawn fail loudly
 	// at runtime if the target doesn't have claude installed.
 	if !spawnOpts.IsolationMode() {
-		if _, err := exec.LookPath(cmd); err != nil {
-			return nil, fmt.Errorf("claudecode: %q CLI not found in PATH, please install it first", cmd)
+		if _, err := exec.LookPath(cliBin); err != nil {
+			return nil, fmt.Errorf("claudecode: %q CLI not found in PATH, please install it first", cliBin)
 		}
 	}
 
@@ -235,26 +214,15 @@ func New(opts map[string]any) (core.Agent, error) {
 		}
 	}
 
-	// Eagerly materialise the shared cc-connect-system.md at startup so
-	// the file exists on disk before the first spawn. claude reads it
-	// via --append-system-prompt-file; the lazy fallback in
-	// newClaudeSession still covers content drift (cc-connect upgrades)
-	// and the empty-ccDataDir corner case. Failure here is non-fatal —
-	// the next spawn will retry and surface the error then.
-	if _, err := ensureSharedSystemPromptFile(ccDataDir, core.AgentSystemPrompt()); err != nil {
-		slog.Warn("claudecode: failed to write shared system prompt file at startup; will retry on first spawn", "err", err, "cc_data_dir", ccDataDir)
-	}
-
 	return &Agent{
 		workDir:          workDir,
-		cmd:              cmd,
+		cliBin:           cliBin,
 		cliExtraArgs:     cliExtraArgs,
-		cmdArgsFlag:      cmdArgsFlag,
+		cliArgsFlag:      cliArgsFlag,
 		model:            model,
 		reasoningEffort:  normalizeEffort(reasoningEffort),
 		mode:             mode,
 		systemPrompt:     systemPrompt,
-		pluginDirs:       pluginDirs,
 		allowedTools:     allowedTools,
 		disallowedTools:  disallowedTools,
 		maxContextTokens: maxContextTokens,
@@ -263,7 +231,6 @@ func New(opts map[string]any) (core.Agent, error) {
 		routerURL:        routerURL,
 		routerAPIKey:     routerAPIKey,
 		spawnOpts:        spawnOpts,
-		ccDataDir:        ccDataDir,
 
 		appendSystemPrompt: appendSystemPrompt,
 	}, nil
@@ -307,7 +274,7 @@ func normalizePermissionMode(raw string) string {
 }
 
 func (a *Agent) Name() string           { return "claudecode" }
-func (a *Agent) CLIBinaryName() string  { return a.cmd }
+func (a *Agent) CLIBinaryName() string  { return a.cliBin }
 func (a *Agent) CLIDisplayName() string { return "Claude" }
 
 func (a *Agent) SetWorkDir(dir string) {
@@ -500,8 +467,6 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	effort := a.reasoningEffort
 	workDir := a.workDir
 	mode := a.mode
-	pluginDirs := make([]string, len(a.pluginDirs))
-	copy(pluginDirs, a.pluginDirs)
 	extraEnv := a.runtimeEnvLocked()
 
 	activeIdx := a.activeIdx
@@ -526,7 +491,7 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	disableVerbose := a.routerURL != ""
 	a.mu.Unlock()
 
-	return newClaudeSession(ctx, workDir, a.cmd, a.cliExtraArgs, a.cmdArgsFlag, model, effort, sessionID, mode, systemPrompt, appendSystemPrompt, tools, disTools, pluginDirs, extraEnv, platformPrompt, disableVerbose, a.spawnOpts, maxTok, a.ccDataDir)
+	return newClaudeSession(ctx, workDir, a.cliBin, a.cliExtraArgs, a.cliArgsFlag, model, effort, sessionID, mode, systemPrompt, appendSystemPrompt, tools, disTools, extraEnv, platformPrompt, disableVerbose, a.spawnOpts, maxTok)
 }
 
 func (a *Agent) ListSessions(ctx context.Context) ([]core.AgentSessionInfo, error) {
@@ -814,7 +779,7 @@ func (a *Agent) GetRunAsEnv() []string {
 // must propagate to per-workspace agent instances created lazily by
 // core.Engine.getOrCreateWorkspaceAgent. Without this snapshot, the engine
 // constructs workspace agents from a fresh opts map and silently drops
-// every claudecode field except mode/model — so cmd, allowed_tools,
+// every claudecode field except mode/model — so cli_path, allowed_tools,
 // and friends would only take effect on the project-level agent.
 //
 // Runtime-only state (providers, sessionEnv, providerProxy, platformPrompt)
@@ -841,11 +806,11 @@ func (a *Agent) WorkspaceAgentOptions() map[string]any {
 		}
 		opts["env"] = envMap
 	}
-	if cliPath := snapshotCmdPath(a.cmd, a.cliExtraArgs); cliPath != "" {
-		opts["cmd"] = cliPath
+	if cliPath := snapshotCLIPath(a.cliBin, a.cliExtraArgs); cliPath != "" {
+		opts["cli_path"] = cliPath
 	}
-	if a.cmdArgsFlag != "" {
-		opts["cmd_args_flag"] = a.cmdArgsFlag
+	if a.cliArgsFlag != "" {
+		opts["cli_args_flag"] = a.cliArgsFlag
 	}
 	if a.model != "" {
 		opts["model"] = a.model
@@ -868,28 +833,25 @@ func (a *Agent) WorkspaceAgentOptions() map[string]any {
 	if a.routerAPIKey != "" {
 		opts["router_api_key"] = a.routerAPIKey
 	}
-	if len(a.pluginDirs) > 0 {
-		opts["plugin_dir"] = stringsToAny(a.pluginDirs)
-	}
 	return opts
 }
 
-// snapshotCmdPath rebuilds the cmd opts string from cmd and the
+// snapshotCLIPath rebuilds the cli_path opts string from cliBin and the
 // extra-args tail captured at construction. Returns "" when only the
 // default "claude" binary is in use, so we don't pollute the workspace
 // opts with a redundant default.
-func snapshotCmdPath(cmd string, cliExtraArgs []string) string {
+func snapshotCLIPath(cliBin string, cliExtraArgs []string) string {
 	// Normalise empty to the default binary so we can reason about extra args.
-	if cmd == "" {
-		cmd = "claude"
+	if cliBin == "" {
+		cliBin = "claude"
 	}
-	if cmd == "claude" && len(cliExtraArgs) == 0 {
+	if cliBin == "claude" && len(cliExtraArgs) == 0 {
 		return "" // default binary, no extra args — no need to persist
 	}
 	if len(cliExtraArgs) == 0 {
-		return cmd
+		return cliBin
 	}
-	return cmd + " " + strings.Join(cliExtraArgs, " ")
+	return cliBin + " " + strings.Join(cliExtraArgs, " ")
 }
 
 // stringsToAny copies a []string into a fresh []any so it round-trips
